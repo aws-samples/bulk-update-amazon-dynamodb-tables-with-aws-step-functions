@@ -1,0 +1,45 @@
+{
+  "StartAt": "GenerateSegments",
+  "States": {
+    "GenerateSegments": {
+      "Type": "Task",
+      "Parameters": {
+        "executionId.$": "$$.Execution.Id"
+      },
+      "Resource": "${GenerateSegmentsFunctionArn}",
+      "Next": "Map"
+    },
+    "Map": {
+      "Type": "Map",
+      "ItemReader": {
+        "ReaderConfig": {
+          "InputType": "JSON"
+        },
+        "Resource": "arn:aws:states:::s3:getObject",
+        "Parameters": {
+          "Bucket.$": "$.bucket",
+          "Key.$": "$.key"
+        }
+      },
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "DISTRIBUTED",
+          "ExecutionType": "STANDARD"
+        },
+        "StartAt": "ScanAndUpdateTable",
+        "States": {
+          "ScanAndUpdateTable": {
+            "Type": "Task",
+            "Resource": "${ScanAndUpdateFunctionArn}",
+            "End": true
+          }
+        }
+      },
+      "End": true,
+      "MaxConcurrency": ${ParallelLambdaFunctions},
+      "ItemBatcher": {
+        "MaxItemsPerBatch": 1
+      }
+    }
+  }
+}
