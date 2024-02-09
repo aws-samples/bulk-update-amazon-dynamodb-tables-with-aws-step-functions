@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  dynamodb-bulk-update
+
+Parameters:
+
+  SourceTable:
+    Description: The name of the DynamoDB table to read from
+    Type: String
+  ConsistentRead:
+    Description: Should the SourceTable use consistent reads (true/false)
+    Type: String
+    AllowedValues:
+      - true
+      - false
+    Default: true
+  DestinationTable:
+    Description: The name of the DynamoDB table to write to (can be the same as SourceTable)
+    Type: String
+  TotalSegments:
+    Description: The number of segments to split the SourceTable into
+    Type: Number
+    Default: 1000
+    MaxValue: 1000000
+  ParallelLambdaFunctions:
+    Description: The number of Lambda invocations to run in parallel
+    Type: Number
+    Default: 10
+    MinValue: 1
+  RateLimit:
+    Description: The maximum number of items each lambda invocation should process per second (-1 for no rate limiting)
+    Type: Number
+    Default: -1
+    MinValue: -1
+
+Resources:
+
+  StepFunctionBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'dynamobulkupdate-${AWS::Region}-${AWS::AccountId}'
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration: 
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+
+  BulkUpdateStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub 'dynamobulkupdate-${SourceTable}-${DestinationTable}'
+      DefinitionUri: statemachine/bulk-update.asl.json
+      DefinitionSubstitutions:
+        GenerateSegmentsFunctionArn: !GetAtt GenerateSegments.Arn
+        ScanAndUpdateFunctionArn: !GetAtt ScanAndUpdateTable.Arn
+        ParallelLambdaFunctions: !Ref ParallelLambdaFunctions
+      Policies: 
+        - LambdaInvokePolicy:
+            FunctionName: !Ref GenerateSegments
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ScanAndUpdateTable
+        - S3ReadPolicy:
+            BucketName: !Ref StepFunctionBucket
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !Sub 'dynamobulkupdate-${SourceTable}-${DestinationTable}' 
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: 
+                - "states:DescribeExecution"
+                - "states:StopExecution"
+              Resource: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:dynamobulkupdate-${SourceTable}-${DestinationTable}:*'
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: 
+                - "states:RedriveExecution"
+              Resource: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:dynamobulkupdate-${SourceTable}-${DestinationTable}/*'
+          
+  GenerateSegments:
+    Type: AWS::Serverless::Function 
+    Properties:
+      CodeUri: functions/
+      Handler: generate-segments.lambda_handler
+      Runtime: python3.9
+      Timeout: 10      
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          TotalSegments: !Ref TotalSegments
+          BucketName: !Ref StepFunctionBucket        
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref StepFunctionBucket          
+
+  ScanAndUpdateTable:
+    Type: AWS::Serverless::Function 
+    Properties:
+      CodeUri: functions/
+      Handler: scan-and-update-table.lambda_handler
+      Runtime: python3.9
+      Timeout: 900      
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          TotalSegments: !Ref TotalSegments
+          SourceTableName: !Ref SourceTable
+          DestinationTableName: !Ref DestinationTable
+          ConsistentRead: !Ref ConsistentRead
+          RateLimit: !Ref RateLimit
+          PageSize: 100        
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref StepFunctionBucket  
+        - DynamoDBCrudPolicy:
+            TableName: !Sub ${SourceTable}
+        - DynamoDBCrudPolicy:
+            TableName: !Sub ${DestinationTable}
+
+Outputs:
+  S3ConfigBucket:
+    Description: The S3 Bucket storing Step Function configuration
+    Value: !Ref StepFunctionBucket    
+  StepFunctionArn:
+    Description: The ARN of the deployed Step Function
+    Value: !Ref BulkUpdateStateMachine
