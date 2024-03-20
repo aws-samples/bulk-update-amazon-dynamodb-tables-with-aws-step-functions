@@ -32,10 +32,11 @@ def process_item(source_table, destination_table, source_batcher, destination_ba
     
     # EXAMPLE - add extra attribute(s) to the item
     # if 'processed_at' not in item:
-    #   destination_table.update_item(
-    #       Key={ 'pk': item['pk'], 'sk' : item['sk'] },
-    #       AttributeUpdates={ 'processed_at': { 'Value': int(time.time()), 'Action': 'PUT' } }
-    #   )
+    #     destination_table.update_item(
+    #         Key={ 'pk': item['pk'], 'sk' : item['sk'] },
+    #         UpdateExpression='SET processed_at = :processed_at',
+    #         ExpressionAttributeValues={ ':processed_at': int(time.time()) }
+    #     )
     
     # EXAMPLE - delete the item if a condition holds
     # if 'delete_at' in item and item['delete_at'] > int(time.time()):
@@ -46,7 +47,8 @@ def process_item(source_table, destination_table, source_batcher, destination_ba
     #     destination_batcher.put_item(Item=item)
     #     source_table.update_item(
     #         Key={ 'pk': item['pk'], 'sk' : item['sk'] },
-    #         AttributeUpdates={ 'migrated': { 'Value': 1, 'Action': 'PUT' } }
+    #         UpdateExpression='SET migrated = :migrated',
+    #         ExpressionAttributeValues={ ':migrated': 1 }
     #     )
 
 
